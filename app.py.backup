@@ -1,0 +1,863 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import io
+
+# Page configuration
+st.set_page_config(
+    page_title="Vehicle Allocation Dashboard",
+    page_icon="🚛",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color                                  
+            arr_col_display = st.sidebar.selectbox( dept_col = get_column_name(dept_col_display)
+            
+            arr_col_display = st.sidebar.selectbox(
+            dept_col = get_column_name(dept_col_display)
+            
+            arr_col_display = st.sidebar.selectbox()
+            dept_col = get_column_name(dept_col_display)
+            
+            arr_col_display = st.sidebar.selectbox(      dept_col = get_column_name(dept_col_display)
+            
+            arr_col_display = st.sidebar.selectbox(
+                "🕐 Arrival/Return Time Column", 
+                available_columns,
+                index=available_columns.index(detected_suggestions.get('arrival', 'None')) if detected_suggestions.get('arrival') in available_columns else 0,
+                key="arr_mapping",
+                help="Select arrival time column (e.g., 'Return (Arrival Time)')"
+            )
+            arr_col = get_column_name(arr_col_display)ol = get_column_name(dept_col_display)
+            
+            arr_col_display = st.sidebar.selectbox( dept_col = get_column_name(dept_col_display)
+            
+            arr_col_display = st.sidebar.selectbox(;
+              passengers_col_display = st.sidebar.selectbox(
+                "👥 Passengers Column (Optional)", 
+                available_columns,
+                index=available_columns.index(detected_suggestions.get('passengers', 'None')) if detected_suggestions.get('passengers') in available_columns else 0,
+                key="passengers_mapping",
+                help="Column showing number of passengers"
+            )
+            passengers_col = get_column_name(passengers_col_display)ext-align: center;
+        margin-bottom: 2rem;
+        padding: 1rem;
+        background: linear-gradient(90deg, #3b82f6, #1d4ed8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    .metric-card {
+        background: white;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border-left: 4px solid #3b82f6;
+    }
+    
+    .stSelectbox > div > div {
+        background-color: #f8fafc;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+def load_sample_data():
+    """Create sample data for demonstration"""
+    sample_data = {
+        'Day': ['Monday', 'Monday', 'Monday', 'Tuesday', 'Tuesday', 'Wednesday', 'Wednesday', 'Thursday', 'Friday', 'Friday'],
+        'Vehicle_ID': ['V001', 'V002', 'V003', 'V001', 'V004', 'V002', 'V005', 'V003', 'V001', 'V004'],
+        'Vehicle_Size': ['Large', 'Medium', 'Small', 'Large', 'Medium', 'Medium', 'Large', 'Small', 'Large', 'Medium'],
+        'Departure_Time': ['08:00', '09:30', '10:15', '07:45', '11:00', '08:30', '09:00', '10:30', '08:15', '09:45'],
+        'Arrival_Time': ['17:00', '16:30', '15:45', '18:15', '14:30', '17:45', '18:00', '16:15', '17:30', '15:00'],
+        'Route': ['Route A', 'Route B', 'Route C', 'Route A', 'Route D', 'Route B', 'Route E', 'Route C', 'Route A', 'Route D']
+    }
+    return pd.DataFrame(sample_data)
+
+def process_time_data(df):
+    """Convert time strings to datetime objects for plotting"""
+    df_processed = df.copy()
+    
+    # Create a mapping for days to dates (using current week)
+    day_mapping = {
+        'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 
+        'Thursday': 3, 'Friday': 4, 'Saturday': 5, 'Sunday': 6
+    }
+    
+    # Get current Monday as base date
+    today = datetime.now()
+    monday = today - timedelta(days=today.weekday())
+    
+    processed_data = []
+    
+    for _, row in df_processed.iterrows():
+        day_offset = day_mapping.get(row['Day'], 0)
+        base_date = monday + timedelta(days=day_offset)
+        
+        # Parse departure and arrival times
+        dep_time = datetime.strptime(row['Departure_Time'], '%H:%M').time()
+        arr_time = datetime.strptime(row['Arrival_Time'], '%H:%M').time()
+        
+        # Combine date and time
+        departure_datetime = datetime.combine(base_date.date(), dep_time)
+        arrival_datetime = datetime.combine(base_date.date(), arr_time)
+        
+        processed_data.append({
+            'Vehicle_ID': row['Vehicle_ID'],
+            'Vehicle_Size': row['Vehicle_Size'],
+            'Day': row['Day'],
+            'Route': row.get('Route', 'Unknown'),
+            'Start': departure_datetime,
+            'Finish': arrival_datetime,
+            'Duration': (arrival_datetime - departure_datetime).total_seconds() / 3600
+        })
+    
+    return pd.DataFrame(processed_data)
+
+def create_gantt_chart(df):
+    """Create an enhanced interactive Gantt chart with better clarity showing days of the week"""
+    # Enhanced color mapping for journey types/vehicle categories with better contrast
+    unique_categories = df['Vehicle_Size'].unique()
+    
+    # Dynamic color mapping based on available categories
+    if len(unique_categories) <= 3:
+        color_map = {
+            unique_categories[0]: '#22c55e',   # Bright Green
+            unique_categories[1] if len(unique_categories) > 1 else 'Default': '#f97316',  # Orange
+            unique_categories[2] if len(unique_categories) > 2 else 'Default': '#dc2626'   # Red
+        }
+    else:
+        # Use a broader color palette for more categories
+        colors = ['#22c55e', '#f97316', '#dc2626', '#8b5cf6', '#06b6d4', '#84cc16', '#f59e0b', '#ef4444']
+        color_map = {cat: colors[i % len(colors)] for i, cat in enumerate(unique_categories)}
+    
+    # Sort vehicles for better organization
+    df_sorted = df.sort_values(['Vehicle_ID', 'Start'])
+    
+    # Create a combined Vehicle_Day identifier for better visualization
+    df_sorted['Vehicle_Day'] = df_sorted['Vehicle_ID'] + ' (' + df_sorted['Day'] + ')'
+    
+    # Create the timeline chart
+    fig = px.timeline(
+        df_sorted, 
+        x_start="Start", 
+        x_end="Finish",
+        y="Vehicle_Day",  # Changed from Vehicle_ID to show day info
+        color="Vehicle_Size",  # This will now show journey purpose/type
+        color_discrete_map=color_map,
+        hover_data=["Day", "Route", "Duration", "Vehicle_ID", "Journey_Purpose"] if 'Journey_Purpose' in df_sorted.columns else ["Day", "Route", "Duration", "Vehicle_ID"],
+        title="🚛 Vehicle Allocation Timeline - Weekly View",
+        labels={
+            "Start": "Departure Time",
+            "Finish": "Arrival Time", 
+            "Vehicle_Day": "Vehicle (Day)",
+            "Vehicle_Size": "Journey Type/Category"
+        }
+    )
+    
+    # Enhanced layout with better spacing and grid
+    fig.update_layout(
+        height=max(500, len(df_sorted['Vehicle_Day'].unique()) * 40 + 250),  # Dynamic height
+        xaxis_title="⏰ Timeline Across Week",
+        yaxis_title="🚛 Vehicle (Day of Week)",
+        title_font_size=22,
+        title_x=0.5,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            title="Vehicle Size Category",
+            font=dict(size=12)
+        ),
+        plot_bgcolor='#f8fafc',
+        paper_bgcolor='white',
+        xaxis=dict(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='#e2e8f0',
+            tickformat='%a %H:%M',  # Show day abbreviation + time
+            title_font=dict(size=14, color='#374151'),
+            tickfont=dict(size=11, color='#6b7280'),
+            tickangle=45
+        ),
+        yaxis=dict(
+            showgrid=True,
+            gridwidth=1,
+            gridcolor='#e2e8f0',
+            title_font=dict(size=14, color='#374151'),
+            tickfont=dict(size=11, color='#6b7280'),
+            categoryorder='category ascending'
+        ),
+        margin=dict(l=150, r=50, t=100, b=100)  # More left margin for longer labels
+    )
+    
+    # Enhanced hover information and text display
+    fig.update_traces(
+        textposition="inside",
+        texttemplate="<b>%{customdata[1]}</b><br>%{customdata[2]:.1f}h",
+        textfont=dict(size=9, color='white'),
+        hovertemplate="<b>🚛 Vehicle: %{customdata[3]}</b><br>" +
+                      "📅 Day: %{customdata[0]}<br>" +
+                      "🛣️ Route: %{customdata[1]}<br>" +
+                      "🕐 Departure: %{x|%a %H:%M}<br>" +
+                      "🕐 Arrival: %{x_end|%a %H:%M}<br>" +
+                      "⏱️ Duration: %{customdata[2]:.1f} hours<br>" +
+                      "📏 Size: %{legendgroup}<br>" +
+                      "<extra></extra>",
+        marker=dict(
+            line=dict(width=2, color='white')  # White border for better separation
+        )
+    )
+    
+    # Add time range annotations for better context
+    fig.add_annotation(
+        text="💡 Weekly View: Hover for details • Click legend to filter • Drag to zoom • Each row shows vehicle on specific day",
+        xref="paper", yref="paper",
+        x=0.5, y=-0.12,
+        showarrow=False,
+        font=dict(size=11, color='#6b7280'),
+        xanchor="center"
+    )
+    
+    return fig
+
+def check_vehicle_conflicts(df):
+    """Check for overlapping vehicle allocations"""
+    conflicts = []
+    
+    for vehicle_id in df['Vehicle_ID'].unique():
+        vehicle_data = df[df['Vehicle_ID'] == vehicle_id].sort_values('Start')
+        
+        for i in range(len(vehicle_data) - 1):
+            current = vehicle_data.iloc[i]
+            next_allocation = vehicle_data.iloc[i + 1]
+            
+            # Check if current allocation ends after next one starts
+            if current['Finish'] > next_allocation['Start']:
+                conflicts.append({
+                    'Vehicle_ID': vehicle_id,
+                    'Conflict_Time': f"{current['Finish'].strftime('%H:%M')} - {next_allocation['Start'].strftime('%H:%M')}",
+                    'Day': current['Day'],
+                    'Duration_Overlap': (current['Finish'] - next_allocation['Start']).total_seconds() / 3600
+                })
+    
+    return pd.DataFrame(conflicts)
+
+def create_utilization_chart(df):
+    """Create vehicle utilization chart"""
+    utilization = df.groupby(['Vehicle_ID', 'Vehicle_Size'])['Duration'].sum().reset_index()
+    
+    # Dynamic color mapping
+    unique_categories = df['Vehicle_Size'].unique()
+    if len(unique_categories) <= 3:
+        color_map = {
+            unique_categories[0]: '#10b981',
+            unique_categories[1] if len(unique_categories) > 1 else 'Default': '#f59e0b', 
+            unique_categories[2] if len(unique_categories) > 2 else 'Default': '#ef4444'
+        }
+    else:
+        colors = ['#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#84cc16']
+        color_map = {cat: colors[i % len(colors)] for i, cat in enumerate(unique_categories)}
+    
+    fig = px.bar(
+        utilization,
+        x='Vehicle_ID',
+        y='Duration',
+        color='Vehicle_Size',
+        title="Vehicle Utilization by Journey Type (Total Hours)",
+        color_discrete_map=color_map,
+        labels={'Vehicle_Size': 'Journey Type/Category'}
+    )
+    
+    fig.update_layout(
+        height=400,
+        xaxis_title="Vehicle ID",
+        yaxis_title="Total Hours",
+        title_font_size=18,
+        title_x=0.5,
+        plot_bgcolor='white',
+        paper_bgcolor='white'
+    )
+    
+    return fig
+
+def create_daily_allocation_chart(df):
+    """Create daily allocation overview with enhanced day-of-week analysis"""
+    daily_stats = df.groupby(['Day', 'Vehicle_Size']).size().reset_index(name='Count')
+    
+    # Define day order for proper sorting
+    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    daily_stats['Day'] = pd.Categorical(daily_stats['Day'], categories=day_order, ordered=True)
+    daily_stats = daily_stats.sort_values('Day')
+    
+    # Dynamic color mapping
+    unique_categories = df['Vehicle_Size'].unique()
+    if len(unique_categories) <= 3:
+        color_map = {
+            unique_categories[0]: '#22c55e',
+            unique_categories[1] if len(unique_categories) > 1 else 'Default': '#f97316',
+            unique_categories[2] if len(unique_categories) > 2 else 'Default': '#dc2626'
+        }
+    else:
+        colors = ['#22c55e', '#f97316', '#dc2626', '#8b5cf6', '#06b6d4', '#84cc16']
+        color_map = {cat: colors[i % len(colors)] for i, cat in enumerate(unique_categories)}
+    
+    fig = px.bar(
+        daily_stats,
+        x='Day',
+        y='Count',
+        color='Vehicle_Size',
+        title="📅 Daily Journey Allocation by Type & Day of Week",
+        color_discrete_map=color_map,
+        text='Count',
+        labels={'Vehicle_Size': 'Journey Type/Category'}
+    )
+    
+    fig.update_layout(
+        height=450,
+        xaxis_title="📅 Day of Week",
+        yaxis_title="Number of Vehicles",
+        title_font_size=18,
+        title_x=0.5,
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        xaxis=dict(
+            tickangle=45,
+            title_font=dict(size=14, color='#374151'),
+            tickfont=dict(size=12, color='#6b7280')
+        ),
+        yaxis=dict(
+            title_font=dict(size=14, color='#374151'),
+            tickfont=dict(size=12, color='#6b7280')
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        )
+    )
+    
+    fig.update_traces(texttemplate='%{text}', textposition='outside')
+    
+    return fig
+
+# Main app
+def main():
+    st.markdown('<h1 class="main-header">🚛 Vehicle Allocation Dashboard</h1>', unsafe_allow_html=True)
+    
+    # Sidebar
+    st.sidebar.header("📊 Dashboard Controls")
+    
+    # File upload
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload Excel File",
+        type=['xlsx', 'xls'],
+        help="Upload any Excel file - you'll be able to map your columns to the required fields"
+    )
+    
+    # Load data
+    if uploaded_file is not None:
+        try:
+            # Try reading with different parameters to handle various Excel formats
+            df_raw = pd.read_excel(uploaded_file, header=0)
+            
+            # Check if we have unnamed columns and try to fix them
+            if any('Unnamed' in str(col) for col in df_raw.columns):
+                st.sidebar.warning("⚠️ Detected unnamed columns. Trying alternative reading methods...")
+                
+                # Try reading without header first, then set header manually
+                df_temp = pd.read_excel(uploaded_file, header=None)
+                st.sidebar.info(f"📋 Raw file preview (first few rows):")
+                
+                # Show first few rows to help user identify the header row
+                with st.sidebar.expander("🔍 Raw File Preview"):
+                    st.dataframe(df_temp.head(5), use_container_width=True)
+                
+                # Let user select header row
+                header_row = st.sidebar.selectbox(
+                    "📍 Select Header Row (0-based index)",
+                    options=list(range(min(10, len(df_temp)))),
+                    index=0,
+                    help="Select which row contains your column headers"
+                )
+                
+                # Re-read with selected header row
+                df_raw = pd.read_excel(uploaded_file, header=header_row)
+                
+                # If still unnamed, let user manually name them
+                if any('Unnamed' in str(col) for col in df_raw.columns):
+                    st.sidebar.warning("📝 Still have unnamed columns. You can proceed with mapping, or try a different header row.")
+            
+            st.sidebar.success("✅ File uploaded successfully!")
+            
+            # Show column mapping interface
+            st.sidebar.subheader("🔗 Column Mapping")
+            st.sidebar.info("Map your Excel columns to the dashboard fields:")
+            
+            # Clean column names and show them clearly
+            available_columns = ['None'] + [f"{i}: {col}" if 'Unnamed' in str(col) else str(col) for i, col in enumerate(df_raw.columns)]
+            
+            # Show the actual columns detected
+            with st.sidebar.expander("📋 Detected Columns"):
+                for i, col in enumerate(df_raw.columns):
+                    sample_val = str(df_raw[col].iloc[0]) if len(df_raw) > 0 else 'N/A'
+                    st.write(f"**{i}: {col}**")
+                    st.write(f"Sample: {sample_val}")
+                    st.write("---")
+            
+            # Show detected columns that might match common patterns
+            detected_suggestions = {}
+            for i, col in enumerate(df_raw.columns):
+                col_lower = str(col).lower()
+                col_display = f"{i}: {col}" if 'Unnamed' in str(col) else str(col)
+                
+                if any(word in col_lower for word in ['day', 'date']):
+                    detected_suggestions['day'] = col_display
+                elif any(word in col_lower for word in ['vehicle', 'assigned', 'car', 'van', 'bus']):
+                    detected_suggestions['vehicle'] = col_display
+                elif any(word in col_lower for word in ['depart', 'departure', 'start', 'leave']):
+                    detected_suggestions['departure'] = col_display
+                elif any(word in col_lower for word in ['return', 'arrival', 'arrive', 'end', 'finish']):
+                    detected_suggestions['arrival'] = col_display
+                elif any(word in col_lower for word in ['passenger', 'people', 'pax', 'occupant']):
+                    detected_suggestions['passengers'] = col_display
+                elif any(word in col_lower for word in ['purpose', 'type', 'journey', 'trip', 'reason']):
+                    detected_suggestions['purpose'] = col_display
+                elif any(word in col_lower for word in ['route', 'destination', 'address', 'location', 'pickup', 'drop']):
+                    detected_suggestions['route'] = col_display
+            
+            if detected_suggestions:
+                st.sidebar.success(f"✨ Auto-detected {len(detected_suggestions)} potential matches!")
+                with st.sidebar.expander("🎯 Suggested Mappings"):
+                    for key, value in detected_suggestions.items():
+                        st.write(f"**{key.title()}:** {value}")
+            
+            # Helper function to get column index from display name
+            def get_column_name(display_name):
+                if display_name == 'None':
+                    return 'None'
+                if ':' in display_name and display_name.split(':')[0].isdigit():
+                    # Format: "0: ColumnName"
+                    idx = int(display_name.split(':')[0])
+                    return df_raw.columns[idx]
+                else:
+                    # Direct column name
+                    return display_name
+            
+            # Column mapping with smart defaults
+            day_col_display = st.sidebar.selectbox(
+                "📅 Day Column", 
+                available_columns, 
+                index=available_columns.index(detected_suggestions.get('day', 'None')) if detected_suggestions.get('day') in available_columns else 0,
+                key="day_mapping",
+                help="Select the column containing day information (e.g., 'Day', 'Date')"
+            )
+            day_col = get_column_name(day_col_display)
+            
+            vehicle_col_display = st.sidebar.selectbox(
+                "🚛 Vehicle/Assignment Column", 
+                available_columns,
+                index=available_columns.index(detected_suggestions.get('vehicle', 'None')) if detected_suggestions.get('vehicle') in available_columns else 0,
+                key="vehicle_mapping",
+                help="Select the column with vehicle information (e.g., 'Assigned Vehicle Info')"
+            )
+            vehicle_col = get_column_name(vehicle_col_display)
+            
+            dept_col_display = st.sidebar.selectbox(
+                "🕐 Departure Time Column", 
+                available_columns,
+                index=available_columns.index(detected_suggestions.get('departure', 'None')) if detected_suggestions.get('departure') in available_columns else 0,
+                key="dept_mapping",
+                help="Select departure time column (e.g., 'Depart (time)')"
+            )
+            dept_col = get_column_name(dept_col_display)
+                "� Departure Time Column", 
+                available_columns,
+                index=available_columns.index(detected_suggestions.get('departure', 'None')) if detected_suggestions.get('departure') in available_columns else 0,
+                key="dept_mapping",
+                help="Select departure time column (e.g., 'Depart (time)')"
+            )
+            
+            arr_col_display = st.sidebar.selectbox(
+                "🕐 Arrival/Return Time Column", 
+                available_columns,
+                index=available_columns.index(detected_suggestions.get('arrival', 'None')) if detected_suggestions.get('arrival') in available_columns else 0,
+                key="arr_mapping",
+                help="Select arrival time column (e.g., 'Return (Arrival Time)')"
+            )
+            arr_col = get_column_name(arr_col_display)
+            
+            # Optional columns
+            st.sidebar.markdown("**Optional Columns:**")
+            
+            passengers_col = st.sidebar.selectbox(
+                "� Passengers Column (Optional)", 
+                available_columns,
+                index=available_columns.index(detected_suggestions.get('passengers', 'None')) if detected_suggestions.get('passengers') in available_columns else 0,
+                key="passengers_mapping",
+                help="Column showing number of passengers"
+            )
+            
+            purpose_col_display = st.sidebar.selectbox(
+                "🎯 Journey Purpose/Type (Optional)", 
+                available_columns,
+                index=available_columns.index(detected_suggestions.get('purpose', 'None')) if detected_suggestions.get('purpose') in available_columns else 0,
+                key="purpose_mapping",
+                help="Journey purpose or type information"
+            )
+            purpose_col = get_column_name(purpose_col_display)
+            
+            route_col_display = st.sidebar.selectbox(
+                "🛣️ Route/Destination (Optional)", 
+                available_columns,
+                index=available_columns.index(detected_suggestions.get('route', 'None')) if detected_suggestions.get('route') in available_columns else 0,
+                key="route_mapping",
+                help="Pick up address, destination, or route information"
+            )
+            route_col = get_column_name(route_col_display)
+            
+            # Check if required mappings are provided
+            core_mappings = [day_col, vehicle_col, dept_col, arr_col]
+            mapped_count = sum(1 for col in core_mappings if col != 'None')
+            
+            if all(col != 'None' for col in core_mappings):
+                # Full mapping - all features available
+                df = pd.DataFrame()
+                df['Day'] = df_raw[day_col]
+                df['Vehicle_ID'] = df_raw[vehicle_col]
+                df['Departure_Time'] = df_raw[dept_col]
+                df['Arrival_Time'] = df_raw[arr_col]
+                
+                # Handle optional columns
+                if passengers_col != 'None':
+                    df['Passengers'] = df_raw[passengers_col]
+                else:
+                    df['Passengers'] = 'Unknown'
+                
+                if purpose_col != 'None':
+                    df['Journey_Purpose'] = df_raw[purpose_col]
+                    # Use journey purpose as vehicle size category for color coding
+                    df['Vehicle_Size'] = df_raw[purpose_col]
+                else:
+                    df['Journey_Purpose'] = 'Unknown'
+                    df['Vehicle_Size'] = 'Standard'
+                
+                if route_col != 'None':
+                    df['Route'] = df_raw[route_col]
+                else:
+                    df['Route'] = 'Unknown'
+                
+                # Convert time columns to string format if they aren't already
+                df['Departure_Time'] = df['Departure_Time'].astype(str)
+                df['Arrival_Time'] = df['Arrival_Time'].astype(str)
+                
+                # Clean time format (handle various time formats)
+                df['Departure_Time'] = df['Departure_Time'].str.replace(r'^\d{4}-\d{2}-\d{2}\s+', '', regex=True)
+                df['Arrival_Time'] = df['Arrival_Time'].str.replace(r'^\d{4}-\d{2}-\d{2}\s+', '', regex=True)
+                
+                st.sidebar.success("✅ Core mapping complete! All dashboard features available.")
+                mapping_status = "complete"
+                
+                # Show preview of mapped data
+                with st.sidebar.expander("👁️ Preview Mapped Data"):
+                    st.dataframe(df.head(3), use_container_width=True)
+                    
+            elif mapped_count >= 2:
+                # Partial mapping - limited features available
+                st.sidebar.warning(f"⚠️ Partial mapping ({mapped_count}/4 core columns mapped)")
+                st.sidebar.info("📊 You can still view your Excel data, but some charts may not be available.")
+                mapping_status = "partial"
+                df = load_sample_data()  # Use sample for demo, but allow Excel viewing
+                
+            else:
+                # Minimal mapping - only Excel viewing available
+                st.sidebar.warning("⚠️ Please map at least 2 columns for basic functionality")
+                st.sidebar.info("📝 Currently only Excel data viewing is available.")
+                mapping_status = "minimal"
+                df = load_sample_data()
+                
+        except Exception as e:
+            st.sidebar.error(f"❌ Error reading file: {str(e)}")
+            df = load_sample_data()
+            mapping_status = "error"
+            st.sidebar.info("📝 Using sample data instead")
+    else:
+        df = load_sample_data()
+        mapping_status = "sample"
+        st.sidebar.info("📝 Using sample data. Upload your Excel file to see your data.")
+    
+    # Data validation - now more flexible
+    if uploaded_file is not None and 'mapping_status' in locals():
+        if mapping_status == "complete":
+            # Full functionality available
+            pass
+        elif mapping_status == "partial":
+            st.info("ℹ️ **Partial Mapping Active**: Some advanced features may be limited. Complete all column mappings for full functionality.")
+        elif mapping_status == "minimal":
+            st.warning("⚠️ **Limited Functionality**: Only Excel data viewing available. Map more columns to enable charts and analysis.")
+        elif mapping_status == "error":
+            st.error("❌ **Error Loading File**: Please check your Excel file format and try again.")
+    
+    # Only process data if we have complete mapping
+    if 'mapping_status' in locals() and mapping_status == "complete":
+        # Process data
+        processed_df = process_time_data(df)
+        
+        # Filters
+        st.sidebar.subheader("🔍 Filters")
+        
+        # Journey type filter (formerly vehicle size)
+        journey_types = ['All'] + list(df['Vehicle_Size'].unique())
+        selected_type = st.sidebar.selectbox("Journey Type/Category", journey_types, help="Filter by journey purpose or type")
+        
+        # Day filter
+        days = ['All'] + list(df['Day'].unique())
+        selected_day = st.sidebar.selectbox("Day of Week", days)
+        
+        # Apply filters
+        filtered_df = processed_df.copy()
+        if selected_type != 'All':
+            filtered_df = filtered_df[filtered_df['Vehicle_Size'] == selected_type]
+        if selected_day != 'All':
+            filtered_df = filtered_df[filtered_df['Day'] == selected_day]
+    else:
+        # Limited functionality - use sample data for demo
+        processed_df = process_time_data(df)
+        filtered_df = processed_df
+        selected_type = "All"
+        selected_day = "All"
+        
+        if uploaded_file is not None:
+            st.sidebar.subheader("⚠️ Charts Unavailable")
+            st.sidebar.info("Complete column mapping to enable filters and charts.")
+        else:
+            # Filters for sample data
+            st.sidebar.subheader("🔍 Filters (Sample Data)")
+            journey_types = ['All'] + list(df['Vehicle_Size'].unique())
+            selected_type = st.sidebar.selectbox("Journey Type/Category", journey_types)
+            days = ['All'] + list(df['Day'].unique())
+            selected_day = st.sidebar.selectbox("Day of Week", days)
+            if selected_type != 'All':
+                filtered_df = filtered_df[filtered_df['Vehicle_Size'] == selected_type]
+            if selected_day != 'All':
+                filtered_df = filtered_df[filtered_df['Day'] == selected_day]
+    
+    # Main dashboard content - conditional based on mapping status
+    if 'mapping_status' in locals() and mapping_status in ["complete", "sample"] or uploaded_file is None:
+        # Full dashboard functionality
+        st.header("🚐 Vehicle Allocation Dashboard")
+        
+        # Display metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Vehicles", len(filtered_df['Vehicle_ID'].unique()))
+        
+        with col2:
+            st.metric("Total Allocations", len(filtered_df))
+        
+        with col3:
+            avg_duration = filtered_df['Duration'].mean()
+            st.metric("Avg Duration", f"{avg_duration:.1f}h")
+        
+        with col4:
+            total_hours = filtered_df['Duration'].sum()
+            st.metric("Total Hours", f"{total_hours:.1f}h")
+    
+        # Main charts
+        st.subheader("📈 Vehicle Allocation Timeline")
+        
+        # Add explanation for the Gantt chart
+        with st.expander("ℹ️ How to Read the Gantt Chart", expanded=False):
+            st.markdown("""
+            **Understanding Your Vehicle Timeline:**
+            
+            🚛 **Y-Axis (Vertical)**: Each row represents a different vehicle on a specific day
+            
+            ⏰ **X-Axis (Horizontal)**: Time of day from morning to evening
+            
+            📊 **Colored Bars**: Each bar shows when a vehicle is allocated:
+            - Different colors represent different journey types/purposes
+            - Colors are automatically assigned based on your data
+            
+            📏 **Bar Length**: Longer bars = longer journey duration
+            
+            💡 **Interactive Features**:
+            - Hover over any bar for detailed information (vehicle, journey purpose, passengers, etc.)
+            - Click legend items to show/hide specific journey types
+            - Drag to zoom in on specific time periods
+            - Use filters in sidebar to focus on specific data
+            """)
+        
+        if not filtered_df.empty:
+            gantt_fig = create_gantt_chart(filtered_df)
+            st.plotly_chart(gantt_fig, use_container_width=True)
+            
+            # Add summary insights
+            st.markdown("### 📊 Quick Insights")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                peak_hour = filtered_df.groupby(filtered_df['Start'].dt.hour).size().idxmax()
+                st.info(f"🕐 **Peak Start Time**: {peak_hour:02d}:00")
+            
+            with col2:
+                busiest_vehicle = filtered_df['Vehicle_ID'].value_counts().index[0]
+                allocations = filtered_df['Vehicle_ID'].value_counts().iloc[0]
+                st.info(f"🚛 **Busiest Vehicle**: {busiest_vehicle} ({allocations} trips)")
+            
+            with col3:
+                longest_trip = filtered_df['Duration'].max()
+                st.info(f"⏱️ **Longest Trip**: {longest_trip:.1f} hours")
+            
+            with col4:
+                if selected_day == 'All':
+                    busiest_day = filtered_df['Day'].value_counts().index[0]
+                    day_count = filtered_df['Day'].value_counts().iloc[0]
+                    st.info(f"📅 **Busiest Day**: {busiest_day} ({day_count} trips)")
+                else:
+                    day_total = len(filtered_df)
+                    st.info(f"📅 **{selected_day}**: {day_total} total trips")
+                
+            # Check for conflicts
+            conflicts_df = check_vehicle_conflicts(filtered_df)
+            if not conflicts_df.empty:
+                st.warning(f"⚠️ **{len(conflicts_df)} scheduling conflict(s) detected!**")
+                with st.expander("View Conflicts Details"):
+                    st.dataframe(conflicts_df, use_container_width=True)
+            else:
+                st.success("✅ No scheduling conflicts detected!")
+        else:
+            st.warning("No data to display with current filters.")
+        
+        # Additional charts
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if not filtered_df.empty:
+                util_fig = create_utilization_chart(filtered_df)
+                st.plotly_chart(util_fig, use_container_width=True)
+        
+        with col2:
+            if not filtered_df.empty:
+                daily_fig = create_daily_allocation_chart(filtered_df)
+                st.plotly_chart(daily_fig, use_container_width=True)
+                
+    elif 'mapping_status' in locals() and mapping_status == "partial":
+        # Limited dashboard functionality
+        st.header("🚐 Vehicle Allocation Dashboard (Limited)")
+        st.info("💡 **Tip**: Complete all column mappings in the sidebar to unlock full dashboard features!")
+        
+        # Show what we can with partial data
+        if len(filtered_df) > 0:
+            col1, col2 = st.columns(2)
+            with col1:
+                try:
+                    st.metric("Total Records", len(filtered_df))
+                except:
+                    st.metric("Total Records", "N/A")
+            with col2:
+                try:
+                    if 'Vehicle_ID' in filtered_df.columns:
+                        st.metric("Unique Vehicles", len(filtered_df['Vehicle_ID'].unique()))
+                    else:
+                        st.metric("Unique Vehicles", "Map Vehicle ID column")
+                except:
+                    st.metric("Unique Vehicles", "N/A")
+            
+            st.subheader("📋 Available Data Preview")
+            st.dataframe(filtered_df.head(10), use_container_width=True)
+        else:
+            st.warning("No data available to display.")
+            
+    else:
+        # Minimal functionality - just show Excel data viewing option
+        st.header("📁 Excel File Viewer")
+        st.info("📋 Your Excel file has been loaded successfully!")
+        st.info("💡 **Next Step**: Complete column mapping in the sidebar to enable dashboard features.")
+        
+        # Show basic file info
+        if 'df_raw' in locals() and df_raw is not None:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📄 Total Rows", len(df_raw))
+            with col2:
+                st.metric("📊 Total Columns", len(df_raw.columns))
+            with col3:
+                st.metric("📁 File Name", uploaded_file.name if uploaded_file else "N/A")
+    
+    # Data table
+    st.subheader("📋 Raw Data")
+    
+    # Create tabs for different data views
+    tab1, tab2 = st.tabs(["📊 Processed Data", "📄 Original Excel Data"])
+    
+    with tab1:
+        st.markdown("**Processed data used for charts and analysis:**")
+        st.dataframe(
+            filtered_df[['Vehicle_ID', 'Vehicle_Size', 'Day', 'Route', 'Start', 'Finish', 'Duration']],
+            use_container_width=True
+        )
+    
+    with tab2:
+        if uploaded_file is not None and 'df_raw' in locals():
+            st.markdown("**Original Excel file data as uploaded:**")
+            st.dataframe(df_raw, use_container_width=True)
+            
+            # Show file info
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📄 Total Rows", len(df_raw))
+            with col2:
+                st.metric("📊 Total Columns", len(df_raw.columns))
+            with col3:
+                st.metric("📁 File Name", uploaded_file.name if uploaded_file else "N/A")
+                
+            # Show column info
+            with st.expander("📋 Column Information"):
+                col_info = pd.DataFrame({
+                    'Column Name': df_raw.columns,
+                    'Data Type': df_raw.dtypes.astype(str),
+                    'Non-Null Count': df_raw.count(),
+                    'Sample Value': [str(df_raw[col].iloc[0]) if len(df_raw) > 0 else 'N/A' for col in df_raw.columns]
+                })
+                st.dataframe(col_info, use_container_width=True)
+        else:
+            st.info("📝 Upload an Excel file to see the original data here.")
+            st.markdown("**Sample data structure:**")
+            sample_df = load_sample_data()
+            st.dataframe(sample_df, use_container_width=True)
+    
+    # Download sample template
+    st.sidebar.subheader("📥 Download Template")
+    sample_df = load_sample_data()
+    
+    # Convert to Excel
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        sample_df.to_excel(writer, sheet_name='Vehicle_Data', index=False)
+    
+    st.sidebar.download_button(
+        label="📄 Download Sample Excel Template",
+        data=output.getvalue(),
+        file_name="vehicle_allocation_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+if __name__ == "__main__":
+    main()
