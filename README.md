@@ -67,3 +67,12 @@ Optional columns like `Route`, `Vehicle Size`, and `Journey Purpose` are also su
 - **[Plotly](https://plotly.com/python/)**: Interactive visualization library
 - **[Pandas](https://pandas.pydata.org/)**: Data manipulation and analysis
 - **[OpenPyXL](https://openpyxl.readthedocs.io/)**: For reading and writing Excel files.
+
+## Optimize Vehicle Allocation Dashboard (Feature Branch)
+
+This branch introduces several enhancements to the Vehicle Allocation Dashboard:
+
+- **User Section** – Added a dedicated area for user interactions.
+- **Advanced Filters** – Vehicle and Location Route filters for improved data exploration.
+- **Passenger Capacity Manager** – Visual capacity bars with adjustable + / – controls for each vehicle.
+- **Polished UI** – Improved layout and responsiveness for a cleaner, more user-friendly experience.
